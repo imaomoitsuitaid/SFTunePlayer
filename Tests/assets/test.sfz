@@ -1,0 +1,7 @@
+// test instrument
+<control> default_path=samples/
+#define $KC 57
+<global> ampeg_release=0.2
+<group> loop_mode=loop_continuous loop_start=200 loop_end=40199
+<region> sample=sine 220.wav lokey=0 hikey=63 pitch_keycenter=$KC
+<region> sample=sine 220.wav lokey=e4 hikey=127 pitch_keycenter=a3 tune=50 /* +50 cents */
