@@ -1,32 +1,47 @@
 name: build
 
-# - push to any branch      -> build Windows installer + macOS (downloadable from the Actions run)
-# - push a tag like v1.0.1  -> same, plus publish a GitHub Release with SFTunePlayer-Setup.exe
-#                              (the plugin's "Check updates" button looks at the latest Release)
+# Push to main:
+#   - builds the Windows installer (SFTunePlayer-Setup.exe) and macOS VST3/AU
+#   - if no release exists yet for the number in VERSION, publishes release v<VERSION>
+#     (the plugin's update check looks at the latest release)
+# Other branches / manual runs: build only.
 on:
   push:
     branches: ['**']
-    tags: ['v*']
   workflow_dispatch:
 
 permissions:
   contents: write
 
 jobs:
+  version:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.v.outputs.version }}
+      publish: ${{ steps.v.outputs.publish }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: v
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          V=$(tr -d '[:space:]' < VERSION)
+          echo "version=$V" >> "$GITHUB_OUTPUT"
+          if [ "$GITHUB_REF" = "refs/heads/main" ] && ! gh release view "v$V" -R "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            echo "publish=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "publish=false" >> "$GITHUB_OUTPUT"
+          fi
+          echo "Version $V"
+
   windows:
+    needs: version
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
 
-      - name: Version from tag
-        id: ver
-        shell: bash
-        run: |
-          if [[ "$GITHUB_REF" == refs/tags/v* ]]; then V="${GITHUB_REF#refs/tags/v}"; else V="0.0.0"; fi
-          echo "version=$V" >> "$GITHUB_OUTPUT"
-
       - name: Configure
-        run: cmake -B build -G "Visual Studio 17 2022" -A x64 -DSFTP_VERSION=${{ steps.ver.outputs.version }} -DSFTP_GITHUB_REPO=${{ github.repository }}
+        run: cmake -B build -G "Visual Studio 17 2022" -A x64 -DSFTP_VERSION=${{ needs.version.outputs.version }} -DSFTP_GITHUB_REPO=${{ github.repository }}
 
       - name: Build
         run: cmake --build build --config Release --parallel --target SFTunePlayer_VST3 SFTunePlayer_Standalone
@@ -36,7 +51,7 @@ jobs:
         run: |
           $iscc = "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe"
           if (-not (Test-Path $iscc)) { choco install innosetup -y --no-progress | Out-Null }
-          & $iscc "/DAppVersion=${{ steps.ver.outputs.version }}" "/DBuildDir=$PWD\build\SFTunePlayer_artefacts\Release" installer\SFTunePlayer.iss
+          & $iscc "/DAppVersion=${{ needs.version.outputs.version }}" "/DBuildDir=$PWD\build\SFTunePlayer_artefacts\Release" installer\SFTunePlayer.iss
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
       - uses: actions/upload-artifact@v4
@@ -44,23 +59,12 @@ jobs:
           name: SFTunePlayer-Windows
           path: dist/SFTunePlayer-Setup.exe
 
-      - name: Publish release
-        if: startsWith(github.ref, 'refs/tags/v')
-        uses: softprops/action-gh-release@v2
-        with:
-          files: dist/SFTunePlayer-Setup.exe
-          generate_release_notes: true
-
   macos:
+    needs: version
     runs-on: macos-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Version from tag
-        id: ver
-        run: |
-          if [[ "$GITHUB_REF" == refs/tags/v* ]]; then V="${GITHUB_REF#refs/tags/v}"; else V="0.0.0"; fi
-          echo "version=$V" >> "$GITHUB_OUTPUT"
-      - run: cmake -B build -G Xcode -DSFTP_VERSION=${{ steps.ver.outputs.version }} -DSFTP_GITHUB_REPO=${{ github.repository }}
+      - run: cmake -B build -G Xcode -DSFTP_VERSION=${{ needs.version.outputs.version }} -DSFTP_GITHUB_REPO=${{ github.repository }}
       - run: cmake --build build --config Release --target SFTunePlayer_VST3 SFTunePlayer_AU -- -quiet
       - name: Zip
         run: |
@@ -71,8 +75,21 @@ jobs:
         with:
           name: SFTunePlayer-macOS
           path: SFTunePlayer-macOS-*.zip
-      - name: Publish release
-        if: startsWith(github.ref, 'refs/tags/v')
-        uses: softprops/action-gh-release@v2
+
+  release:
+    needs: [version, windows, macos]
+    if: needs.version.outputs.publish == 'true' && !cancelled() && needs.windows.result == 'success'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
         with:
-          files: SFTunePlayer-macOS-*.zip
+          path: out
+          merge-multiple: true
+      - uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v${{ needs.version.outputs.version }}
+          target_commitish: ${{ github.sha }}
+          name: SF Tune Player ${{ needs.version.outputs.version }}
+          generate_release_notes: true
+          make_latest: true
+          files: out/*

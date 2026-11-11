@@ -1,8 +1,10 @@
 cmake_minimum_required(VERSION 3.22)
 
 # Version shown in the plugin and compared with GitHub Releases.
-# The release workflow sets it from the git tag (v1.2.3 -> 1.2.3).
-set(SFTP_VERSION "1.0.0" CACHE STRING "Plugin version (major.minor.patch)")
+# Comes from the VERSION file; bump it and push to main to publish a new release.
+file(READ "${CMAKE_CURRENT_SOURCE_DIR}/VERSION" SFTP_VERSION_FILE)
+string(STRIP "${SFTP_VERSION_FILE}" SFTP_VERSION_FILE)
+set(SFTP_VERSION "${SFTP_VERSION_FILE}" CACHE STRING "Plugin version (major.minor.patch)")
 # GitHub repository used for update checks, e.g. "yourname/SFTunePlayer". Empty = no update checks.
 set(SFTP_GITHUB_REPO "" CACHE STRING "owner/repo for update checks")
 
